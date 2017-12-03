@@ -1,0 +1,206 @@
+---
+title: "684 final"
+author: "Kailun Huang"
+date: "11/14/2017"
+output:
+  pdf_document: default
+  html_document: default
+---
+```{r}
+library(tidyr)
+library(readr)
+library(arm)
+library(lme4)
+library(merTools)
+library(aod)
+library(ggplot2)
+library(Rcpp)
+
+
+```
+## Midterm Project Research Topic:
+How does each independent variable(kills, days, damage_per_game) affect the dependent variable(number of wins) among different ranks, based on the dataset "PUBG_Player_Statistics"? Since each season there will be an update to balance the game, I hope my analysis can help the company to balance the game in an appropriate way.
+
+## Abstract
+In PUBG, there are lots of factors that influence the number of wins of each player. The variables I've selected are the variables that I think have determinant effects on number of wins. If one player has lots of kills, it means he is good at playing this game and his number of wins should be high to some extent. If someone play this game for a long time,his skill should be good. However, this situation only happens when all the players play in the same rank and in one game. In reality, PUBG has a ranking system that will distribute players with similar skills to play in one game. Thus, we need to consider a multi-level model group by rank to determine what are the key factors that decide the number of wins in different ranks.  
+
+
+## Data cleaning and manipulation
+
+```{r setup, include=FALSE}
+pubg<-read.csv('PUBG_Player_Statistics.csv')
+pubg$winratio<-as.numeric(pubg$solo_Wins/pubg$solo_RoundsPlayed)
+pubg$kill_pg<-as.numeric(pubg$solo_Kills/pubg$solo_RoundsPlayed)
+pubg1<-select(pubg,winratio,solo_TimeSurvived,solo_RoundsPlayed,solo_Rating,solo_Rank,solo_DamagePg,solo_MoveDistancePg,solo_Kills,solo_Days,kill_pg,solo_Wins,Region)
+colnames(pubg1)<-c("Win_ratio","Time_Survived","Roundsplayed","Rating","Rank","Damage_per_game","Movedistance_per_game","Days","kill_pg","wins","kills","region")
+pubg1$Rank<-factor(pubg1$Rank,levels=c('silver1','silver2','silver3','silver4','gold nova 1','gold nova 2','gold nova 3','gold nova 4','master guardian I','master guardian II','legendary eagle','legendary eagle master','supreme first class','global elite'))
+```
+## Data challenge
+There are value "0" in most of the variables I'm going to select. In order to transform the model into a log-linear model for some situation, I add 1 to each variable to make the log-linear model accessible.
+## EDA
+First graph
+```{r}
+wins<-ggplot()+geom_jitter(aes(y=wins,x=kills),data = pubg1)
+wins
+
+```
+## The first graph is a scatterplot that x axis stands for number of kills each player has in total, y axis stands for number of wins each player has. From the scatterplot we can find out a tendency that more kills tends to lead to a higher number of wins. However, this graph is just a simple explanation of the relationship between two variables and exist bias. If we want to know the difference on how large kills affect number of wins between each group(in this case, rank), we need to draw another graph that includes player's rank in it.
+```{r}
+winsbyrank<-ggplot()+geom_jitter(aes(y=wins,x=kills),data = pubg1)+facet_grid(~Rank)
+winsbyrank
+
+```
+## The first plot I made is about the relationship between kills and number of wins among different ranks in my dataset. By drawing this graph I found out that in silver I rank, kills does not affect win ratio a lot. However, in global elite rank, there is a tendency that more kills leads to an increase in number of wins. So, I think it is a better idea to fit a multi-level model since each group(rank) has different situation. 
+
+## Overall data display
+```{r}
+killbyrank<-ggplot()+geom_histogram(aes(x=kills,fill=Rank),data = pubg1)
+killbyrank+coord_flip()
+
+damagebyrank<-ggplot()+geom_histogram(aes(x=Damage_per_game,fill=Rank),data = pubg1)
+damagebyrank+coord_flip()
+```
+
+
+## Simple Linear Regression
+```{r}
+fit1<-lm(wins~Damage_per_game+kills+Days,data = pubg1)
+summary(fit1)
+plot(fit1)
+
+fit11<-lm(wins~Damage_per_game+kills+Days+Days*kills,data = pubg1)
+summary(fit11)
+plot(fit11)
+```
+## After doing the simple linear regression. I've found out that the intercept is a negative value which is not reasonable since the mean of my dependent variable which is "wins" in this case should have a postive value. So I want to fit another model that variables are centered at mean.
+
+
+```{r}
+pubg1$average_wins<-mean(pubg1$wins)
+pubg1$diffwins<-pubg1$wins-pubg1$average_wins
+
+pubg1$average_Damage<-mean(pubg1$Damage_per_game)
+pubg1$diffdamage<-pubg1$Damage_per_game-pubg1$average_Damage
+
+pubg1$average_kills<-mean(pubg1$kills)
+pubg1$diffkills<-pubg1$kills-pubg1$average_kills
+
+pubg1$average_days<-mean(pubg1$Days)
+pubg1$diffdays<-pubg1$Days-pubg1$average_days
+
+fit2<-lm(diffwins~diffdamage+diffkills+diffdays,data = pubg1)
+summary(fit2)
+residplot1<-ggplot(pubg1, aes(fitted.values(fit2), resid(fit2)))+geom_point()
+residplot1
+
+```
+##  After centered the variables at mean and run the regression, I've found out that the intercept of this model is about 2.368e-15 and it is a positive value. This mean this model is better than the previous model. Also, the t value of two independent variables are largers than 2 which means the selected variables are statistically significant. However, I want to investigate that which variables influences number of wins in different ranks. Moreover, different people played different rounds, thus we need to consider the rounds they played in the model. So I need to fit a multi-level model.
+
+## No pooling model
+```{r}
+fit3<-lm(wins~Damage_per_game+kills+Days+factor(Rank),data = pubg1)
+summary(fit3)
+residplot<-ggplot(pubg1, aes(fitted.values(fit3), resid(fit3)))+geom_point()
+residplot
+
+pubg1$wins1<-pubg1$wins+1
+fit4<-lm(wins1~Damage_per_game+kills+Days+factor(Rank),data = pubg1)
+summary(fit4)
+
+fit5<-lm(wins1~Damage_per_game+kills+Days+Days*kills+factor(Rank),data = pubg1)
+summary(fit5)
+
+killsnopool<-ggplot(pubg1, aes(x=kills, y=wins, color=as.factor(Rank))) + 
+   geom_point(shape=20) + 
+   geom_smooth(method=lm) + 
+   theme(legend.position="none") 
+killsnopool
+dmgnopool<-ggplot(pubg1, aes(x=Damage_per_game, y=wins, color=as.factor(Rank))) + 
+   geom_point(shape=20) + 
+   geom_smooth(method=lm) + 
+   theme(legend.position="none") 
+dmgnopool
+   
+```
+## After fit the variables into a no pooling model, I've found out that all coefficients value are statistically significant except for days and R-square value is 0.97 which is very high. The reason why each of the coefficient value is small is because the actual value for each variables is large. I'm not be able to transform this model to a log model because there is 0 exists in each variable. So I add 1 to wins to make all values not 0 and fit a new model. From the graph I've made, it showed that for most ranks, more kills leads to more wins in higher rank except for two ranks. More damage_per_game leads to more wins in all ranks. However, after made the residual plot, I can see a pattern in the residual plot which is not good. I will fit the variables in a partial pooling model next step.
+
+
+## Partial pooling model selection
+
+```{r}
+model3 <- lmer(wins ~ Damage_per_game +kills + 
+                 (1 | Rank), data = pubg1)
+AIC(model3)
+plotFEsim(FEsim(model3))
+plotREsim(REsim(model3))
+
+
+model2 <- lmer(wins ~ Damage_per_game +kills + Days+
+                 (1 | Rank), data = pubg1)
+AIC(model2)
+plotFEsim(FEsim(model2))
+plotREsim(REsim(model2))
+
+
+model1 <- lmer(wins ~kills + 
+                 (1 | Rank), data = pubg1)
+AIC(model1)
+plotFEsim(FEsim(model1))
+plotREsim(REsim(model1))
+
+AIC(model1,model2,model3)
+```
+Since the smaller value of AIC stands for better model, I will pick model 3 to fit the partial pooling model. And from the PlotResim function I can know whether the rank has positive or negative relationship to the dependent variable.
+
+## Varying Intercept
+```{r}
+pubg1$kills1<-pubg1$kills+1
+pubg1$Damage_per_game1<-pubg1$Damage_per_game+1
+reg1<-lmer(log(wins1)~kills1+Damage_per_game1+(1|Rank),weights=Roundsplayed,data = pubg1)
+reg2<-lmer(wins~kills1+Damage_per_game1+(1|Rank),weights=Roundsplayed,data = pubg1)
+reg3<-lmer(wins~kills+Damage_per_game+(1|Rank),weights=Roundsplayed,data = pubg1)
+summary(reg1)
+summary(reg2)
+summary(reg3)
+intercepts<-coef(reg1)$Rank[,1]
+slopes<-coef(reg1)$Rank[,2]
+ggplot(pubg1, aes(x=kills, y=wins, group=Rank))+
+  stat_smooth(method="lm", se=FALSE, size=.5, color="springgreen") + 
+  stat_smooth(aes(group=1), method="lm", color="blue", size=1.5)+geom_abline(slope=slopes,intercept = intercepts)
+
+
+```
+## Interpretation
+model1: 
+With a unit increase in kills, number of wins increase by exp(-7.628) percent, however its t value is smaller than 2 and it is not significant.
+With a unit increase in Damage, number of wins increase by exp(9.357) percent.
+
+I added Roundsplayed by each player as weight in this model. It is because each player played different rounds. After adding this variable as weight will make my model more reasonable. 
+
+
+## Varying slopes
+```{r}
+reg11<-lmer(wins1~kills+(1+kills|Rank),weights=Roundsplayed,data = pubg1)
+summary(reg11)
+intercepts1<-coef(reg11)$Rank[,1]
+slopes1<-coef(reg11)$Rank[,2]
+ggplot(pubg1, aes(x=kills, y=wins, group=Rank))+
+  stat_smooth(method="lm", se=FALSE, size=.5, color="springgreen") + 
+  stat_smooth(aes(group=1), method="lm", color="blue", size=1.5)+geom_abline(slope=slopes1,intercept = intercepts1)
+
+
+```
+## Interpretation
+With an increase in kills, number of wins increase by 0.063.
+
+
+
+
+## Conclusion
+After fitting three different models, I think no pooling model fits my data best. Since the question I want to solve is among different ranks, what variables tends to influence number of wins more or less. From the no pooling model, both variables I'm interested about is significant and their coefficient inspire me a lot. Also, the R-squared for no pooling model is about 0.97 which means 97 percent of the data can explain this linear regression. From the coefficient in different rank we can know that, when the rank is increasing, kills is more pivot in determine number of wins as well as damage. So, as a suggestion, in the next update, pubg should put more obstacles in the map to make shooting harder in higher level match. Thus, the balance of the game can be improved.
+
+
+## Limitation
+There are some player using hack in the match. Thus, their kills and number of wins will be very high but illegal. That's the reason why my dataset has outliers. However, since there is no system can detect the hack and some players play very good; I can not filter my data by elinimating outliers. Also, I found out that my coefficient value is small, I think in the future I will find larger coefficient value so that I can interpret the model more easily. 
+
+
